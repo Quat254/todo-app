@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "todo-app",
-    "slug": "todo-app",
+  "name": "FACE ME",
+  "slug": "face-me",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "todoapp",
+    "scheme": "faceme",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
