@@ -6,17 +6,23 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 
-// Web app Firebase configuration copied from the Firebase console.
-// Analytics is only available on the web; for React Native we only use auth.
 const firebaseConfig = {
-  apiKey: 'AIzaSyAAk7TQIa-tXcxNLAo1VqVsQ9-BPDZL4ms',
-  authDomain: 'face-me-cbbb2.firebaseapp.com',
-  projectId: 'face-me-cbbb2',
-  storageBucket: 'face-me-cbbb2.firebasestorage.app',
-  messagingSenderId: '685503854952',
-  appId: '1:685503854952:web:6f28851ea34890d5bbbedd',
-  measurementId: 'G-6LWY31571H',
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
+
+Object.entries(firebaseConfig).forEach(([key, value]) => {
+  if (!value) {
+    throw new Error(
+      `Missing Firebase config value for ${key}. Set EXPO_PUBLIC_FIREBASE_* environment variables.`,
+    );
+  }
+});
 
 const app = initializeApp(firebaseConfig);
 

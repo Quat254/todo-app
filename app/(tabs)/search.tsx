@@ -91,8 +91,20 @@ export default function SearchScreen() {
 
   const recommendedProducts = useMemo(() => {
     if (historyIssues.length === 0) return PRODUCTS;
+
+    const meaningfulIssues = historyIssues
+      .map((issue) => issue?.toLowerCase()?.trim())
+      .filter((issue) => issue && issue !== 'balanced');
+
+    if (meaningfulIssues.length === 0) {
+      // Only "balanced" (generic) was detected, so show the full catalog.
+      return PRODUCTS;
+    }
+
     return PRODUCTS.filter((p) =>
-      historyIssues.some((issue) => issue.includes(p.issueKey))
+      meaningfulIssues.some((issue) =>
+        issue.includes(p.issueKey.toLowerCase())
+      )
     );
   }, [historyIssues]);
 
