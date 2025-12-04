@@ -1,5 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Button,
@@ -8,8 +8,16 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { auth } from '../firebaseConfig';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+} from 'firebase/auth';
 
 const OIL_RECOMMENDATIONS = {
   acne: {
@@ -58,8 +66,9 @@ function mapIssuesToOils(issues = []) {
   }));
 }
 
-// Simple built-in "fake AI" so the app works without any external API.
-// It returns sample issues and skin types so you can see the full flow.
+// Simple built-in "fake AI" so the app works even if the Clarifai API key
+// isn't configured yet. It returns sample issues and skin types so you can
+// see the full flow.
 function fakeAnalyzeImage() {
   const possibleIssues = [
     'acne',
@@ -94,11 +103,91 @@ function fakeAnalyzeMultipleFaces() {
 }
 
 export default function HomeScreen() {
+  const [user, setUser] = useState(null);
+  const [showIntro, setShowIntro] = useState(true);
+  const [nameInput, setNameInput] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
   const [imageUri, setImageUri] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [faces, setFaces] = useState([]);
   const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('@faceme_user');
+        if (stored) {
+          setUser(JSON.parse(stored));
+        }
+      } catch (e) {
+        console.warn('Failed to load user', e);
+      }
+    };
+
+    loadUser();
+
+    const timer = setTimeout(() => {
+      setShowIntro(false);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleLogin = async () => {
+    if (!emailInput.trim() || !passwordInput.trim()) {
+      setError('Please enter email and password to continue.');
+      return;
+    }
+
+    const email = emailInput.trim().toLowerCase();
+    const password = passwordInput;
+
+    try {
+      // Try sign-in first.
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      const firebaseUser = cred.user;
+
+      const profile = {
+        id: firebaseUser.uid,
+        name: firebaseUser.displayName || nameInput.trim() || email,
+        email: firebaseUser.email ?? email,
+      };
+      await AsyncStorage.setItem('@faceme_user', JSON.stringify(profile));
+      setUser(profile);
+      setError(null);
+    } catch (signInError: any) {
+      if (signInError.code === 'auth/user-not-found') {
+        // If user doesn't exist, create an account.
+        try {
+          const cred = await createUserWithEmailAndPassword(
+            auth,
+            email,
+            password,
+          );
+          const firebaseUser = cred.user;
+          if (nameInput.trim()) {
+            await updateProfile(firebaseUser, { displayName: nameInput.trim() });
+          }
+          const profile = {
+            id: firebaseUser.uid,
+            name: nameInput.trim() || email,
+            email: firebaseUser.email ?? email,
+          };
+          await AsyncStorage.setItem('@faceme_user', JSON.stringify(profile));
+          setUser(profile);
+          setError(null);
+        } catch (signUpError: any) {
+          console.warn('Failed to sign up user', signUpError);
+          setError(signUpError.message);
+        }
+      } else {
+        console.warn('Failed to sign in user', signInError);
+        setError(signInError.message);
+      }
+    }
+  };
 
   const pickImage = async () => {
     setError(null);
@@ -130,12 +219,46 @@ export default function HomeScreen() {
     analyzeImage(asset.base64);
   };
 
-  // TODO: Replace 'YOUR_CLARIFAI_API_KEY_HERE' with your actual API key from Clarifai Settings
-  const CLARIFAI_API_KEY = '94762d5c61a54cb786f7e00a1757a551';
+  // Clarifai API key is now read from an environment variable so it is
+  // not hard-coded in the source code or committed to Git.
+  // Set EXPO_PUBLIC_CLARIFAI_API_KEY before running the app, for example:
+  //   PowerShell: $env:EXPO_PUBLIC_CLARIFAI_API_KEY="your_key_here"; npm start
+  const CLARIFAI_API_KEY = process.env.EXPO_PUBLIC_CLARIFAI_API_KEY;
   const FACE_MODEL_VERSION_ID = '6dc7e46bc9124c5c8824be4822abe105';
   const GENERAL_MODEL_ID = 'general-image-recognition';
 
+  const saveHistoryEntry = async (facesResults) => {
+    if (!user) return;
+    const entry = {
+      id: Date.now().toString(),
+      timestamp: Date.now(),
+      faces: facesResults,
+    };
+    const historyKey = `@faceme_history_${user.id}`;
+    try {
+      const existing = await AsyncStorage.getItem(historyKey);
+      const parsed = existing ? JSON.parse(existing) : [];
+      parsed.push(entry);
+      await AsyncStorage.setItem(historyKey, JSON.stringify(parsed));
+    } catch (e) {
+      console.warn('Failed to save history entry', e);
+    }
+  };
+
   const analyzeImage = async (base64) => {
+    // If no API key is configured, fall back to the built‑in fake analysis
+    // so the app still feels responsive and useful.
+    if (!CLARIFAI_API_KEY) {
+      const simulatedFaces = fakeAnalyzeMultipleFaces();
+      setFaces(simulatedFaces);
+      await saveHistoryEntry(simulatedFaces);
+      setError(
+        'Real AI analysis is not configured yet. Showing a simulated example. ' +
+          'Set EXPO_PUBLIC_CLARIFAI_API_KEY and restart the app to enable Clarifai.'
+      );
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setFaces([]);
@@ -250,6 +373,7 @@ export default function HomeScreen() {
       });
 
       setFaces(results);
+      await saveHistoryEntry(results);
     } catch (e) {
       console.warn('Clarifai API error:', e);
       setError(
@@ -259,6 +383,58 @@ export default function HomeScreen() {
       setLoading(false);
     }
   };
+
+  if (showIntro) {
+    return (
+      <View style={styles.introScreen}>
+        <Text style={styles.introTitle}>FACE ME</Text>
+      </View>
+    );
+  }
+
+  if (!user) {
+    return (
+      <ScrollView contentContainerStyle={styles.loginScreen}>
+        <View style={styles.loginCard}>
+          <Text style={styles.greetingText}>Welcome 👋</Text>
+          <Text style={styles.greetingSubtitle}>
+            Sign in to save your face analysis history.
+          </Text>
+
+          <View style={styles.loginForm}>
+            <Text style={styles.inputLabel}>Name</Text>
+            <TextInput
+              placeholder="Enter your name"
+              value={nameInput}
+              onChangeText={setNameInput}
+              style={styles.inputField}
+            />
+            <Text style={styles.inputLabel}>Email (optional)</Text>
+            <TextInput
+              placeholder="you@example.com"
+              value={emailInput}
+              onChangeText={setEmailInput}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              style={styles.inputField}
+            />
+            <Text style={styles.inputLabel}>Password</Text>
+            <TextInput
+              placeholder="Enter password"
+              value={passwordInput}
+              onChangeText={setPasswordInput}
+              secureTextEntry
+              style={styles.inputField}
+            />
+            <View style={styles.loginButtonWrapper}>
+              <Button title="Continue" onPress={handleLogin} color="#0C7686" />
+            </View>
+            {error && <Text style={styles.errorText}>{error}</Text>}
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView
@@ -272,13 +448,18 @@ export default function HomeScreen() {
           isDark && styles.cardContainerDark,
         ]}>
         <View style={styles.headerRow}>
-          <Text style={[styles.backArrow, isDark && styles.headerTextDark]}>
-            {'\u2190'}
+          <Text style={[styles.greetingSmall, isDark && styles.headerTextDark]}>
+            Hi, {user.name || 'there'} 👋
           </Text>
-          <Text
-            style={[styles.headerTitle, isDark && styles.headerTextDark]}>
-            FACE ME
-          </Text>
+          <View style={styles.titleBlock}>
+            <Text style={[styles.headerTitle, isDark && styles.headerTextDark]}>
+              Elevate your complexion care
+            </Text>
+            <Text
+              style={[styles.headerSubtitle, isDark && styles.subtitleDark]}>
+              Smart skin scan & oil recommendations
+            </Text>
+          </View>
           <View style={styles.themeToggle}>
             <Text style={[styles.themeLabel, isDark && styles.headerTextDark]}>
               {isDark ? 'Dark' : 'Light'}
@@ -287,25 +468,23 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={styles.illustrationWrapper}>
-          <View style={styles.illustrationCard}>
+        <View style={styles.heroCard}>
+          <View style={styles.heroTextBlock}>
+            <Text style={[styles.heroTitle, isDark && styles.headerTextDark]}>
+              Glowing skin deserves good care
+            </Text>
+            <Text style={[styles.heroSubtitle, isDark && styles.subtitleDark]}>
+              Scan your face and get personalized oil recommendations.
+            </Text>
+            <View style={styles.scanButtonWrapper}>
+              <Button title="Scan your face" onPress={pickImage} color="#020617" />
+            </View>
+          </View>
+          <View style={styles.heroImagePlaceholder}>
             <View style={styles.facePlaceholder}>
               <View style={styles.faceCircle} />
             </View>
           </View>
-        </View>
-
-        <View style={styles.textSection}>
-          <Text style={[styles.mainTitle, isDark && styles.headerTextDark]}>
-            Check Your Skin
-          </Text>
-          <Text style={[styles.subtitle, isDark && styles.subtitleDark]}>
-            Analyze your skin for better recommendations.
-          </Text>
-        </View>
-
-        <View style={styles.buttonWrapper}>
-          <Button title="Scan Skin" onPress={pickImage} color="#0C7686" />
         </View>
 
         {loading && (
@@ -363,11 +542,75 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  loginScreen: {
+    padding: 24,
+    paddingTop: 80,
+    alignItems: 'center',
+    backgroundColor: '#E6F4FE',
+    flexGrow: 1,
+  },
+  introScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E6F4FE',
+  },
+  introTitle: {
+    fontSize: 32,
+    fontWeight: '900',
+    letterSpacing: 4,
+    color: '#020617',
+  },
+  loginCard: {
+    width: '100%',
+    borderRadius: 28,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  loginForm: {
+    marginTop: 24,
+    gap: 12,
+  },
+  inputLabel: {
+    fontSize: 13,
+    color: '#4b5563',
+    marginBottom: 4,
+  },
+  inputField: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    backgroundColor: '#f9fafb',
+  },
+  loginButtonWrapper: {
+    marginTop: 8,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  greetingText: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#020617',
+    marginBottom: 4,
+  },
+  greetingSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
   screen: {
     padding: 24,
     paddingTop: 40,
     alignItems: 'center',
-    backgroundColor: '#f2f4f7',
+    backgroundColor: '#E6F4FE',
   },
   screenDark: {
     backgroundColor: '#020617',
@@ -394,14 +637,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 24,
   },
-  backArrow: {
-    fontSize: 22,
+  greetingSmall: {
+    fontSize: 16,
+    fontWeight: '600',
     color: '#14213d',
+  },
+  titleBlock: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 2,
   },
   headerTitle: {
     fontSize: 22,
-    fontWeight: '700',
-    color: '#14213d',
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: '#020617',
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#6b7280',
   },
   headerTextDark: {
     color: '#e5e7eb',
@@ -416,29 +670,54 @@ const styles = StyleSheet.create({
     color: '#4b5563',
   },
   illustrationWrapper: {
-    alignItems: 'center',
+    alignItems: 'stretch',
     marginBottom: 24,
   },
-  illustrationCard: {
-    width: 220,
-    height: 180,
+  heroCard: {
+    flexDirection: 'row',
     borderRadius: 28,
     backgroundColor: '#ffe5d6',
-    justifyContent: 'center',
+    padding: 20,
     alignItems: 'center',
   },
+  heroTextBlock: {
+    flex: 2,
+    paddingRight: 12,
+    gap: 8,
+  },
+  heroTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#020617',
+  },
+  heroSubtitle: {
+    fontSize: 13,
+    color: '#4b5563',
+  },
+  scanButtonWrapper: {
+    marginTop: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+    alignSelf: 'flex-start',
+    minWidth: 150,
+  },
+  heroImagePlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   facePlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
     backgroundColor: '#f8f0ea',
     justifyContent: 'center',
     alignItems: 'center',
   },
   faceCircle: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     borderWidth: 3,
     borderColor: '#333333',
   },

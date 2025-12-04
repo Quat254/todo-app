@@ -1,7 +1,7 @@
 {
   "expo": {
-  "name": "FACE ME",
-  "slug": "face-me",
+    "name": "FACE ME",
+    "slug": "face-me",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -19,7 +19,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.ibrahh.faceme"
     },
     "web": {
       "output": "static",
@@ -43,6 +44,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f8e1380f-378b-47f9-b46d-17fef7b2236a"
+      }
     }
   }
 }
